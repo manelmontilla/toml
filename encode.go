@@ -155,22 +155,36 @@ func (enc *Encoder) encode(key Key, rv reflect.Value) {
 // eElement encodes any value that can be an array element (primitives and
 // arrays).
 func (enc *Encoder) eElement(rv reflect.Value) {
-	switch v := rv.Interface().(type) {
-	case time.Time:
-		// Special case time.Time as a primitive. Has to come before
-		// TextMarshaler below because time.Time implements
-		// encoding.TextMarshaler, but we need to always use UTC.
+
+	// We are maintaining the behavior of the original library that was not using the TextMashaler provided
+	// by time.Time as they wanted to always encode time using UTC.
+	if v, ok := rv.Interface().(time.Time); ok {
 		enc.wf(v.UTC().Format("2006-01-02T15:04:05Z"))
 		return
-	case TextMarshaler:
-		// Special case. Use text marshaler if it's available for this value.
-		if s, err := v.MarshalText(); err != nil {
-			encPanic(err)
-		} else {
-			enc.writeQuoted(string(s))
-		}
-		return
 	}
+
+	// We give priority to TextMarshaler so we try first to call
+	// it over a pointer receiver which is usually the default way of implementing interfaces in go
+	// if the type is not implementing the interface with pointer receivers we check if the type
+	// implements TextMashaler interface without pointers.
+
+	var tv reflect.Value
+	if rv.CanAddr() {
+		tv = rv.Addr()
+	} else {
+		tv = rv
+	}
+	if tv.CanInterface() {
+		if v, ok := tv.Interface().(TextMarshaler); ok {
+			if s, err := v.MarshalText(); err != nil {
+				encPanic(err)
+			} else {
+				enc.writeQuoted(string(s))
+			}
+			return
+		}
+	}
+
 	switch rv.Kind() {
 	case reflect.Bool:
 		enc.wf(strconv.FormatBool(rv.Bool()))
